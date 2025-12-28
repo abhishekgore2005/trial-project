@@ -9,14 +9,38 @@ import pandas as pd
 import sqlite3 
 from datetime import datetime
 from collections import Counter
-from thefuzz import process, fuzz # Feature 2: Fuzzy Logic
+from thefuzz import process, fuzz
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(page_title="Pro Resume Screener", layout="wide")
 
-# --- 2. DATABASE SETUP (Feature 4) ---
+# --- UI CLEAN UP (Hide GitHub, Menu, Footer) ---
+st.markdown("""
+    <style>
+        /* Hides the top right toolbar (Share, Star, GitHub, Menu, etc.) */
+        [data-testid="stToolbar"] {
+            visibility: hidden;
+            height: 0%;
+            position: fixed;
+        }
+        /* Hides the standard "Made with Streamlit" footer */
+        footer {
+            visibility: hidden;
+        }
+        /* Hides the hamburger menu (top right 3 dots) */
+        #MainMenu {
+            visibility: hidden;
+        }
+        /* Adds a little padding since the header is gone */
+        .block-container {
+            padding-top: 1rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- 2. DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('resume_history.db')
     c = conn.cursor()
@@ -63,25 +87,22 @@ def extract_email_from_text(text):
 
 def calculate_score_fuzzy(text, required_skills, required_edu):
     text = text.lower()
-    text_words = set(text.split()) # Tokenize for fuzzy matching
+    text_words = set(text.split())
     
-    # 1. Education (Exact match is usually better for degrees, but we can be lenient)
+    # 1. Education
     edu_matches = [edu for edu in required_edu if edu in text]
     edu_score = 30 if edu_matches else 0
     
-    # 2. Skills (Feature 2: Fuzzy Logic)
+    # 2. Skills (Fuzzy)
     skill_matches = []
     missing_skills = []
     
     for skill in required_skills:
-        # First, try fast exact match
         if skill in text:
             skill_matches.append(skill)
         else:
-            # If not found, try fuzzy match against unique words
-            # limit=1 returns the single best match, e.g., [('powerbi', 90)]
             match = process.extractOne(skill, text_words, scorer=fuzz.ratio)
-            if match and match[1] >= 85: # 85% similarity threshold
+            if match and match[1] >= 85:
                 skill_matches.append(skill)
             else:
                 missing_skills.append(skill)
@@ -95,7 +116,6 @@ def calculate_score_fuzzy(text, required_skills, required_edu):
 
 def send_email(to_email, subject, body_html):
     try:
-        # SECURE: Read from secrets
         sender_email = st.secrets["email"]["address"]
         sender_password = st.secrets["email"]["password"]
         
@@ -147,7 +167,6 @@ elif st.session_state["authentication_status"]:
 
     st.title("🚀 Pro Resume Screener v2.0")
     
-    # Define tabs for Feature 4 (History)
     tab1, tab2 = st.tabs(["📄 Analysis Board", "🗄️ History Database"])
 
     # --- SIDEBAR INPUTS ---
@@ -174,7 +193,6 @@ elif st.session_state["authentication_status"]:
         with col2:
             st.info("💡 New: Fuzzy logic is enabled. 'PowerBI' will match 'Power BI'.")
 
-        # Session State for Analysis Results
         if 'results' not in st.session_state:
             st.session_state['results'] = None
 
@@ -186,13 +204,11 @@ elif st.session_state["authentication_status"]:
                 text = extract_text_from_pdf(file)
                 candidate_email = extract_email_from_text(text)
                 
-                # USE FUZZY SCORE FUNCTION
                 score, missing_skills = calculate_score_fuzzy(text, REQUIRED_SKILLS, REQUIRED_EDUCATION)
                 
                 status = "SELECTED" if score >= cutoff else "REJECTED"
                 email_sent_status = "Skipped"
 
-                # Email Logic
                 if enable_email and candidate_email:
                     if status == "SELECTED":
                         subject = "Interview Invitation"
@@ -214,23 +230,20 @@ elif st.session_state["authentication_status"]:
                     "Status": status,
                     "Missing Skills": ", ".join(missing_skills),
                     "Email Status": email_sent_status,
-                    "Raw Text": text # Saving for Feature 3 (Previewer)
+                    "Raw Text": text
                 })
                 progress_bar.progress((i + 1) / len(uploaded_files))
             
-            # Save to Session State AND Database
             st.session_state['results'] = pd.DataFrame(results_data)
-            save_to_db(results_data) # Feature 4: Save to DB
+            save_to_db(results_data)
             st.success("Analysis Complete & Saved to History!")
 
         # --- DISPLAY RESULTS ---
         if st.session_state['results'] is not None:
             df = st.session_state['results']
             
-            # Dynamic Status Update based on slider
             df['Status'] = df['Score'].apply(lambda x: "SELECTED" if x >= cutoff else "REJECTED")
 
-            # Layout: Metrics & Charts
             c1, c2 = st.columns([2, 1])
             
             with c1:
@@ -238,12 +251,10 @@ elif st.session_state["authentication_status"]:
                 def color_row(row):
                     return ['background-color: #d4edda' if row['Status'] == 'SELECTED' else 'background-color: #f8d7da'] * len(row)
                 
-                # Show table without Raw Text column
                 display_cols = ['Filename', 'Email', 'Score', 'Status', 'Missing Skills', 'Email Status']
                 st.dataframe(df[display_cols].style.apply(color_row, axis=1), use_container_width=True)
 
             with c2:
-                # FEATURE 1: MISSING SKILLS CHART
                 st.subheader("📊 Market Insights")
                 all_missing = [skill for sublist in df['Missing Skills'].str.split(', ') for skill in sublist if skill]
                 if all_missing:
@@ -252,7 +263,6 @@ elif st.session_state["authentication_status"]:
                 else:
                     st.write("No missing skills detected!")
 
-            # FEATURE 3: RESUME PREVIEWER
             st.divider()
             st.subheader("👁️ Resume Deep Dive")
             selected_file = st.selectbox("Select Candidate to Preview", df['Filename'])
@@ -261,14 +271,13 @@ elif st.session_state["authentication_status"]:
                 candidate_text = df[df['Filename'] == selected_file]['Raw Text'].values[0]
                 st.text_area("Extracted Text Content", candidate_text, height=200)
 
-    # --- TAB 2: HISTORY (Feature 4) ---
+    # --- TAB 2: HISTORY ---
     with tab2:
         st.header("🗄️ Database History")
         history_df = fetch_history()
         
         if not history_df.empty:
             st.dataframe(history_df, use_container_width=True)
-            
             csv = history_df.to_csv(index=False).encode('utf-8')
             st.download_button("Download Full History (CSV)", csv, "full_history.csv", "text/csv")
             
