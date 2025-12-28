@@ -16,26 +16,28 @@ from email.mime.multipart import MIMEMultipart
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(page_title="Pro Resume Screener", layout="wide")
 
-# --- UI CLEAN UP (Hide GitHub, Menu, Footer) ---
+# --- UI CLEAN UP (Show Toolbar ONLY on Hover) ---
 st.markdown("""
     <style>
-        /* Hides the top right toolbar (Share, Star, GitHub, Menu, etc.) */
-        [data-testid="stToolbar"] {
-            visibility: hidden;
-            height: 0%;
-            position: fixed;
+        /* Make the header transparent by default */
+        [data-testid="stHeader"] {
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out; /* Smooth transition */
         }
-        /* Hides the standard "Made with Streamlit" footer */
+
+        /* Make it visible when you hover over it */
+        [data-testid="stHeader"]:hover {
+            opacity: 1;
+        }
+
+        /* Hides the standard "Made with Streamlit" footer completely */
         footer {
             visibility: hidden;
         }
-        /* Hides the hamburger menu (top right 3 dots) */
-        #MainMenu {
-            visibility: hidden;
-        }
-        /* Adds a little padding since the header is gone */
+
+        /* Adds a little padding since the header visually disappears */
         .block-container {
-            padding-top: 1rem;
+            padding-top: 2rem;
         }
     </style>
 """, unsafe_allow_html=True)
