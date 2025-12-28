@@ -1,5 +1,6 @@
 streamlit
 streamlit-authenticator
-pandas
 pypdf
-PyYAML
+pyyaml
+pandas
+thefuzz
