@@ -134,6 +134,10 @@ elif st.session_state["authentication_status"]:
 
     uploaded_files = st.file_uploader("Upload Resumes (PDF)", type="pdf", accept_multiple_files=True)
 
+    # --- SESSION STATE LOGIC START ---
+    if 'results' not in st.session_state:
+        st.session_state['results'] = None
+
     if uploaded_files and st.button(f"Analyze {len(uploaded_files)} Resumes"):
         results_data = []
         progress_bar = st.progress(0)
@@ -142,8 +146,9 @@ elif st.session_state["authentication_status"]:
             text = extract_text_from_pdf(file)
             candidate_email = extract_email_from_text(text)
             score, missing_skills = calculate_score(text, REQUIRED_SKILLS, REQUIRED_EDUCATION)
-            status = "SELECTED" if score >= cutoff else "REJECTED"
             
+            # Determine status at time of processing
+            status = "SELECTED" if score >= cutoff else "REJECTED"
             email_sent_status = "Skipped"
             
             # --- EMAIL LOGIC ---
@@ -202,7 +207,12 @@ elif st.session_state["authentication_status"]:
             progress_bar.progress((i + 1) / len(uploaded_files))
 
         st.success("Processing Complete!")
-        df = pd.DataFrame(results_data)
+        # Store in session state
+        st.session_state['results'] = pd.DataFrame(results_data)
+
+    # --- DISPLAY LOGIC (Run from Session State) ---
+    if st.session_state['results'] is not None:
+        df = st.session_state['results']
         
         # Visualization
         colA, colB = st.columns(2)
