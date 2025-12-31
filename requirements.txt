@@ -1,6 +1,10 @@
 streamlit
 streamlit-authenticator
+PyYAML
 pypdf
-pyyaml
 pandas
-thefuzz
+spacy
+plotly
+matplotlib
+wordcloud
+scikit-learn
