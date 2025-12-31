@@ -1,1 +1,7 @@
-pip install streamlit streamlit-authenticator==0.2.3 pypdf thefuzz python-levenshtein pandas pyyaml
+streamlit
+streamlit-authenticator==0.2.3
+pypdf
+thefuzz
+python-levenshtein
+pandas
+pyyaml
