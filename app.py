@@ -1,7 +1,5 @@
 import streamlit as st
 import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
 import pypdf
 import smtplib
 import re
@@ -27,11 +25,31 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CONFIGURATION & CREDENTIALS ---
-# ⚠️ SECURITY NOTE: Ideally use st.secrets for this. 
-# If you must hardcode for a student project, replace the values below.
-EMAIL_ADDRESS = "hirebot.project@gmail.com"  # <--- REPLACE THIS
-EMAIL_PASSWORD = "nfyq ghye qzlw bmcb"    # <--- REPLACE THIS
+# --- 2. CONFIGURATION (HARDCODED) ---
+# ⚠️ SECURITY NOTE: Ideally use st.secrets. This is for student project demonstration only.
+EMAIL_ADDRESS = "hirebot.project@gmail.com"
+EMAIL_PASSWORD = "nfyq ghye qzlw bmcb"
+
+# DIRECT CONFIGURATION (No config.yaml needed)
+# This fixes the "FileNotFound" and "KeyError" issues permanently.
+config = {
+    "credentials": {
+        "usernames": {
+            "admin": {
+                "email": "admin@gmail.com",
+                "failed_login_attempts": 0,
+                "logged_in": False,
+                "name": "Admin User",
+                "password": "abc"  # Plain text 'abc' for simplicity
+            }
+        }
+    },
+    "cookie": {
+        "expiry_days": 30,
+        "key": "random_signature_key_final",
+        "name": "resume_analyst_final_v99"  # <--- NEW NAME FORCES FRESH COOKIE
+    }
+}
 
 # --- 3. DATABASE SETUP ---
 def init_db():
@@ -63,7 +81,7 @@ def fetch_history():
 
 init_db()
 
-# --- 4. CORE FUNCTIONS (Data Science Upgrade) ---
+# --- 4. CORE FUNCTIONS ---
 
 def extract_text_from_pdf(file):
     try:
@@ -80,7 +98,6 @@ def extract_email(text):
     return match.group(0) if match else None
 
 def calculate_similarity(resume_text, job_desc):
-    """Upgraded to use Cosine Similarity (TF-IDF) instead of just keywords"""
     if not job_desc: return 0.0
     text_list = [resume_text, job_desc]
     cv = TfidfVectorizer(stop_words='english')
@@ -89,9 +106,6 @@ def calculate_similarity(resume_text, job_desc):
     return round(match_percentage, 2)
 
 def send_email_notification(to_email, status, score):
-    if "YOUR_EMAIL" in EMAIL_ADDRESS: 
-        return "Not Configured" 
-        
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
@@ -116,13 +130,6 @@ def send_email_notification(to_email, status, score):
         return f"Failed: {e}"
 
 # --- 5. AUTHENTICATION ---
-try:
-    with open('config.yaml') as file:
-        config = yaml.load(file, Loader=SafeLoader)
-except FileNotFoundError:
-    st.error("⚠️ Config.yaml not found!")
-    st.stop()
-
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
@@ -130,17 +137,18 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-authenticator.login('Login', 'main')
+# Correct Login Call for v0.2.3
+name, authentication_status, username = authenticator.login('Login', 'main')
 
-if st.session_state["authentication_status"] is False:
+if authentication_status is False:
     st.error('Username/password is incorrect')
     st.stop()
-elif st.session_state["authentication_status"] is None:
+elif authentication_status is None:
     st.warning('Please enter your username and password')
     st.stop()
 
 # --- 6. MAIN APP LOGIC ---
-elif st.session_state["authentication_status"]:
+elif authentication_status:
     
     with st.sidebar:
         st.write(f'User: **{st.session_state["name"]}**')
@@ -191,7 +199,6 @@ elif st.session_state["authentication_status"]:
                     })
                     progress.progress((i + 1) / len(uploaded_files))
                 
-                # Save & Display
                 save_to_db(results)
                 df = pd.DataFrame(results)
                 df = df.sort_values(by="Match Score", ascending=False)
@@ -223,6 +230,3 @@ elif st.session_state["authentication_status"]:
                 st.rerun()
         else:
             st.info("No historical data found.")
-
-
-
