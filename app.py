@@ -26,12 +26,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. CONFIGURATION (HARDCODED) ---
-# ⚠️ SECURITY NOTE: Ideally use st.secrets. This is for student project demonstration only.
 EMAIL_ADDRESS = "hirebot.project@gmail.com"
 EMAIL_PASSWORD = "nfyq ghye qzlw bmcb"
 
-# DIRECT CONFIGURATION (No config.yaml needed)
-# This fixes the "FileNotFound" and "KeyError" issues permanently.
+# DIRECT CONFIGURATION
+# We use the Hasher to generate the correct hash for 'abc'
+hashed_passwords = stauth.Hasher(['abc']).generate()
+
 config = {
     "credentials": {
         "usernames": {
@@ -40,14 +41,14 @@ config = {
                 "failed_login_attempts": 0,
                 "logged_in": False,
                 "name": "Admin User",
-                "password": "abc"  # Plain text 'abc' for simplicity
+                "password": hashed_passwords[0]  # <--- USES CORRECT HASH
             }
         }
     },
     "cookie": {
         "expiry_days": 30,
-        "key": "random_signature_key_final",
-        "name": "resume_analyst_final_v99"  # <--- NEW NAME FORCES FRESH COOKIE
+        "key": "random_signature_key_final_v2",
+        "name": "resume_analyst_super_final"
     }
 }
 
@@ -137,7 +138,7 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-# Correct Login Call for v0.2.3
+# Login
 name, authentication_status, username = authenticator.login('Login', 'main')
 
 if authentication_status is False:
