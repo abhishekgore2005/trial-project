@@ -19,15 +19,18 @@ from sklearn.metrics.pairwise import cosine_similarity
 st.set_page_config(page_title="AI Resume Analyst", layout="wide", page_icon="🧠")
 
 # Load NLP Model (Cache it for speed)
+# --- CHANGED: Robust Model Loading ---
 @st.cache_resource
 def load_nlp():
-    return spacy.load("en_core_web_sm")
+    try:
+        return spacy.load("en_core_web_sm")
+    except OSError:
+        # If the model is missing, download it via command line
+        from spacy.cli import download
+        download("en_core_web_sm")
+        return spacy.load("en_core_web_sm")
 
-try:
-    nlp = load_nlp()
-except OSError:
-    st.error("⚠️ Model not found. Please run: python -m spacy download en_core_web_sm")
-    st.stop()
+nlp = load_nlp()
 
 # Custom CSS for UI
 st.markdown("""
@@ -273,3 +276,4 @@ elif st.session_state["authentication_status"]:
                     st.text(row['Raw Text'])
         else:
             st.info("Upload and analyze resumes to unlock Deep Dive.")
+
