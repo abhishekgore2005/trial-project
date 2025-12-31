@@ -1,11 +1,1 @@
-streamlit
-streamlit-authenticator==0.2.3
-PyYAML
-pypdf
-pandas
-spacy
-plotly
-matplotlib
-wordcloud
-scikit-learn
-
+pip install streamlit streamlit-authenticator pypdf thefuzz python-levenshtein pandas pyyaml
