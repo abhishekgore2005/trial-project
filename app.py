@@ -130,7 +130,7 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-authenticator.login('main')
+authenticator.login('Login', 'main')
 
 if st.session_state["authentication_status"] is False:
     st.error('Username/password is incorrect')
@@ -223,5 +223,6 @@ elif st.session_state["authentication_status"]:
                 st.rerun()
         else:
             st.info("No historical data found.")
+
 
 
