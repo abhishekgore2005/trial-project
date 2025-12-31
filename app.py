@@ -3,146 +3,57 @@ import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 import pypdf
-import smtplib
-import re
 import pandas as pd
 import sqlite3 
+import spacy
+import re
 from datetime import datetime
 from collections import Counter
-from thefuzz import process, fuzz
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import plotly.express as px
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-# --- 1. PAGE CONFIGURATION ---
-st.set_page_config(page_title="Pro Resume Screener", layout="wide")
+# --- 1. SETUP & CONFIGURATION ---
+st.set_page_config(page_title="AI Resume Analyst", layout="wide", page_icon="🧠")
 
-# --- UI CLEAN UP (Show Toolbar ONLY on Hover) ---
+# Load NLP Model (Cache it for speed)
+@st.cache_resource
+def load_nlp():
+    return spacy.load("en_core_web_sm")
+
+try:
+    nlp = load_nlp()
+except OSError:
+    st.error("⚠️ Model not found. Please run: python -m spacy download en_core_web_sm")
+    st.stop()
+
+# Custom CSS for UI
 st.markdown("""
     <style>
-        /* Make the header transparent by default */
+        .metric-card {
+            background-color: #f0f2f6;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
         [data-testid="stHeader"] {
             opacity: 0;
-            transition: opacity 0.5s ease-in-out; /* Smooth transition */
+            transition: opacity 0.5s ease-in-out;
         }
-
-        /* Make it visible when you hover over it */
         [data-testid="stHeader"]:hover {
             opacity: 1;
-        }
-
-        /* Hides the standard "Made with Streamlit" footer completely */
-        footer {
-            visibility: hidden;
-        }
-
-        /* Adds a little padding since the header visually disappears */
-        .block-container {
-            padding-top: 2rem;
         }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. DATABASE SETUP ---
-def init_db():
-    conn = sqlite3.connect('resume_history.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS candidates
-                 (date TEXT, filename TEXT, email TEXT, score REAL, status TEXT, missing_skills TEXT)''')
-    conn.commit()
-    conn.close()
-
-def save_to_db(data_list):
-    conn = sqlite3.connect('resume_history.db')
-    c = conn.cursor()
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for row in data_list:
-        c.execute("INSERT INTO candidates VALUES (?,?,?,?,?,?)", 
-                  (timestamp, row['Filename'], row['Email'], row['Score'], row['Status'], row['Missing Skills']))
-    conn.commit()
-    conn.close()
-
-def fetch_history():
-    conn = sqlite3.connect('resume_history.db')
-    df = pd.read_sql_query("SELECT * FROM candidates ORDER BY date DESC", conn)
-    conn.close()
-    return df
-
-# Initialize DB on app start
-init_db()
-
-# --- 3. HELPER FUNCTIONS ---
-def extract_text_from_pdf(file):
-    try:
-        pdf_reader = pypdf.PdfReader(file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() or ""
-        return text
-    except Exception as e:
-        return ""
-
-def extract_email_from_text(text):
-    text = re.sub(r'\s+', ' ', text)
-    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b'
-    match = re.search(email_pattern, text)
-    return match.group(0) if match else None
-
-def calculate_score_fuzzy(text, required_skills, required_edu):
-    text = text.lower()
-    text_words = set(text.split())
-    
-    # 1. Education
-    edu_matches = [edu for edu in required_edu if edu in text]
-    edu_score = 30 if edu_matches else 0
-    
-    # 2. Skills (Fuzzy)
-    skill_matches = []
-    missing_skills = []
-    
-    for skill in required_skills:
-        if skill in text:
-            skill_matches.append(skill)
-        else:
-            match = process.extractOne(skill, text_words, scorer=fuzz.ratio)
-            if match and match[1] >= 85:
-                skill_matches.append(skill)
-            else:
-                missing_skills.append(skill)
-    
-    if required_skills:
-        skill_score = (len(skill_matches) / len(required_skills)) * 70
-    else:
-        skill_score = 0
-        
-    return round(edu_score + skill_score, 2), missing_skills
-
-def send_email(to_email, subject, body_html):
-    try:
-        sender_email = st.secrets["email"]["address"]
-        sender_password = st.secrets["email"]["password"]
-        
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body_html, 'html'))
-        
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.sendmail(sender_email, to_email, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Email Error: {e}")
-        return False
-
-# --- 4. AUTH & CONFIG ---
+# --- 2. AUTHENTICATION SETUP ---
 try:
     with open('config.yaml') as file:
         config = yaml.load(file, Loader=SafeLoader)
 except FileNotFoundError:
-    st.error("Error: 'config.yaml' not found.")
+    st.error("⚠️ Error: 'config.yaml' file is missing. Please create it to proceed.")
     st.stop()
 
 authenticator = stauth.Authenticate(
@@ -152,7 +63,8 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-authenticator.login()
+# Login Widget
+authenticator.login('main')
 
 if st.session_state["authentication_status"] is False:
     st.error('Username/password is incorrect')
@@ -161,133 +73,203 @@ elif st.session_state["authentication_status"] is None:
     st.warning('Please enter your username and password')
     st.stop()
 
-# --- 5. MAIN APPLICATION ---
+# --- 3. MAIN APPLICATION (Only runs if logged in) ---
 elif st.session_state["authentication_status"]:
-    authenticator.logout('Logout', 'sidebar')
-    st.sidebar.write(f'User: *{st.session_state["name"]}*')
-    st.sidebar.divider()
-
-    st.title("🚀 Pro Resume Screener v2.0")
     
-    tab1, tab2 = st.tabs(["📄 Analysis Board", "🗄️ History Database"])
-
-    # --- SIDEBAR INPUTS ---
+    # Sidebar Logout
     with st.sidebar:
-        st.header("1. Job Criteria")
-        DEFAULT_SKILLS = "python, sql, machine learning, power bi, excel"
-        req_skills_input = st.text_area("Required Skills", DEFAULT_SKILLS)
-        req_edu_input = st.text_area("Required Education", "b.tech, mca, bca, computer science")
-        cutoff = st.slider("Cutoff Score (%)", 0, 100, 60)
-        
-        REQUIRED_SKILLS = [s.strip().lower() for s in req_skills_input.split(",") if s.strip()]
-        REQUIRED_EDUCATION = [e.strip().lower() for e in req_edu_input.split(",") if e.strip()]
-        
+        st.write(f'User: **{st.session_state["name"]}**')
+        authenticator.logout('Logout', 'sidebar')
         st.divider()
-        st.header("2. Email Automation")
-        enable_email = st.checkbox("Enable Auto-Emailing", value=False)
-        if enable_email: st.success("✅ Active")
 
-    # --- TAB 1: ANALYSIS ---
+    # --- DATABASE FUNCTIONS ---
+    def init_db():
+        conn = sqlite3.connect('resume_data.db')
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS candidates
+                     (date TEXT, filename TEXT, name TEXT, email TEXT, score REAL, experience_years INTEGER)''')
+        conn.commit()
+        conn.close()
+
+    def save_to_db(data_list):
+        conn = sqlite3.connect('resume_data.db')
+        c = conn.cursor()
+        timestamp = datetime.now().strftime("%Y-%m-%d")
+        for row in data_list:
+            c.execute("SELECT * FROM candidates WHERE filename = ?", (row['Filename'],))
+            if not c.fetchone():
+                c.execute("INSERT INTO candidates VALUES (?,?,?,?,?,?)", 
+                          (timestamp, row['Filename'], row['Name'], row['Email'], row['Match Score'], 0))
+        conn.commit()
+        conn.close()
+
+    init_db()
+
+    # --- ANALYTIC FUNCTIONS ---
+    def extract_text_from_pdf(file):
+        try:
+            pdf_reader = pypdf.PdfReader(file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() or ""
+            return text
+        except Exception:
+            return ""
+
+    def extract_entities(text):
+        """Uses spaCy (NER) to find Names and Organizations"""
+        doc = nlp(text)
+        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+        email_match = re.search(email_pattern, text)
+        email = email_match.group(0) if email_match else "Unknown"
+        
+        name = "Unknown"
+        for ent in doc.ents:
+            if ent.label_ == "PERSON":
+                name = ent.text
+                break
+                
+        return name, email
+
+    def calculate_similarity(resume_text, job_desc):
+        """Calculates Semantic Similarity using TF-IDF & Cosine Similarity"""
+        if not job_desc:
+            return 0.0
+        
+        text_list = [resume_text, job_desc]
+        cv = TfidfVectorizer(stop_words='english')
+        count_matrix = cv.fit_transform(text_list)
+        match_percentage = cosine_similarity(count_matrix)[0][1] * 100
+        return round(match_percentage, 2)
+
+    def generate_wordcloud(text):
+        wordcloud = WordCloud(width=800, height=400, background_color='white').generate(text)
+        return wordcloud
+
+    # --- APP UI ---
+    st.title("🧠 AI Resume Analyst (Data Science Edition)")
+    st.markdown("Powered by **NLP (spaCy)**, **Vectorization (Scikit-Learn)**, and **Interactive Dataviz (Plotly)**.")
+
+    # Sidebar: Job Context
+    with st.sidebar:
+        st.header("🎯 Job Description (JD)")
+        st.info("Paste the full Job Description here.")
+        job_description = st.text_area("Paste JD Here", height=300, 
+                                       placeholder="e.g. We are looking for a Data Analyst...")
+        
+        cutoff = st.slider("Minimum Match Score", 0, 100, 50)
+
+    # Tabs
+    tab1, tab2, tab3 = st.tabs(["📂 Upload & Analyze", "📊 Batch Analytics", "🔍 Deep Dive"])
+
+    # --- TAB 1: UPLOAD & PROCESS ---
     with tab1:
-        col1, col2 = st.columns(2)
-        with col1:
-            uploaded_files = st.file_uploader("Upload Resumes (PDF)", type="pdf", accept_multiple_files=True)
-        with col2:
-            st.info("💡 New: Fuzzy logic is enabled. 'PowerBI' will match 'Power BI'.")
-
+        uploaded_files = st.file_uploader("Upload Resumes (PDF)", type="pdf", accept_multiple_files=True)
+        
         if 'results' not in st.session_state:
             st.session_state['results'] = None
 
-        if uploaded_files and st.button(f"Analyze {len(uploaded_files)} Resumes"):
-            results_data = []
-            progress_bar = st.progress(0)
-            
-            for i, file in enumerate(uploaded_files):
-                text = extract_text_from_pdf(file)
-                candidate_email = extract_email_from_text(text)
-                
-                score, missing_skills = calculate_score_fuzzy(text, REQUIRED_SKILLS, REQUIRED_EDUCATION)
-                
-                status = "SELECTED" if score >= cutoff else "REJECTED"
-                email_sent_status = "Skipped"
-
-                if enable_email and candidate_email:
-                    if status == "SELECTED":
-                        subject = "Interview Invitation"
-                        body = f"<html><body><h2 style='color:green'>Shortlisted!</h2><p>Score: {score}%</p></body></html>"
-                        email_success = send_email(candidate_email, subject, body)
-                    else:
-                        subject = "Application Update"
-                        body = f"<html><body><h2 style='color:gray'>Update</h2><p>Missing: {', '.join(missing_skills[:3])}</p></body></html>"
-                        email_success = send_email(candidate_email, subject, body)
+        if uploaded_files and st.button("Analyze Resumes"):
+            if not job_description:
+                st.error("⚠️ Please enter a Job Description in the sidebar first!")
+            else:
+                with st.spinner("Vectorizing text and computing cosine similarity..."):
+                    results = []
+                    for file in uploaded_files:
+                        text = extract_text_from_pdf(file)
+                        name, email = extract_entities(text)
+                        score = calculate_similarity(text, job_description)
+                        
+                        status = "✅ Shortlisted" if score >= cutoff else "❌ Rejected"
+                        
+                        results.append({
+                            "Filename": file.name,
+                            "Name": name,
+                            "Email": email,
+                            "Match Score": score,
+                            "Status": status,
+                            "Raw Text": text
+                        })
                     
-                    email_sent_status = "Sent" if email_success else "Failed"
-                elif enable_email and not candidate_email:
-                    email_sent_status = "No Email"
+                    df = pd.DataFrame(results)
+                    df = df.sort_values(by="Match Score", ascending=False)
+                    st.session_state['results'] = df
+                    save_to_db(results)
+                    st.success(f"Processed {len(df)} resumes successfully!")
 
-                results_data.append({
-                    "Filename": file.name,
-                    "Email": candidate_email,
-                    "Score": score,
-                    "Status": status,
-                    "Missing Skills": ", ".join(missing_skills),
-                    "Email Status": email_sent_status,
-                    "Raw Text": text
-                })
-                progress_bar.progress((i + 1) / len(uploaded_files))
-            
-            st.session_state['results'] = pd.DataFrame(results_data)
-            save_to_db(results_data)
-            st.success("Analysis Complete & Saved to History!")
+        if st.session_state['results'] is not None:
+            st.dataframe(
+                st.session_state['results'][['Name', 'Email', 'Match Score', 'Status']], 
+                use_container_width=True
+            )
 
-        # --- DISPLAY RESULTS ---
+    # --- TAB 2: DASHBOARD (Data Viz) ---
+    with tab2:
         if st.session_state['results'] is not None:
             df = st.session_state['results']
             
-            df['Status'] = df['Score'].apply(lambda x: "SELECTED" if x >= cutoff else "REJECTED")
-
-            c1, c2 = st.columns([2, 1])
+            col1, col2 = st.columns(2)
             
-            with c1:
-                st.subheader("Results Table")
-                def color_row(row):
-                    return ['background-color: #d4edda' if row['Status'] == 'SELECTED' else 'background-color: #f8d7da'] * len(row)
+            with col1:
+                st.subheader("Match Score Distribution")
+                fig_hist = px.histogram(df, x="Match Score", nbins=10, title="Candidate Score Distribution",
+                                        color_discrete_sequence=['#636EFA'])
+                st.plotly_chart(fig_hist, use_container_width=True)
                 
-                display_cols = ['Filename', 'Email', 'Score', 'Status', 'Missing Skills', 'Email Status']
-                st.dataframe(df[display_cols].style.apply(color_row, axis=1), use_container_width=True)
-
-            with c2:
-                st.subheader("📊 Market Insights")
-                all_missing = [skill for sublist in df['Missing Skills'].str.split(', ') for skill in sublist if skill]
-                if all_missing:
-                    missing_counts = pd.DataFrame(Counter(all_missing).items(), columns=['Skill', 'Count'])
-                    st.bar_chart(missing_counts.set_index('Skill'), color="#ff4b4b")
-                else:
-                    st.write("No missing skills detected!")
-
-            st.divider()
-            st.subheader("👁️ Resume Deep Dive")
-            selected_file = st.selectbox("Select Candidate to Preview", df['Filename'])
+            with col2:
+                st.subheader("Status Breakdown")
+                fig_pie = px.pie(df, names='Status', title="Shortlisted vs Rejected",
+                                 color_discrete_sequence=['#00CC96', '#EF553B'])
+                st.plotly_chart(fig_pie, use_container_width=True)
+                
+            st.subheader("Most Mentioned Keywords (Top 15)")
+            all_text = " ".join(df['Raw Text'])
+            words = [w.lower() for w in all_text.split() if len(w) > 5 and w.isalpha()] 
+            word_counts = Counter(words).most_common(15)
+            kw_df = pd.DataFrame(word_counts, columns=['Keyword', 'Count'])
             
-            if selected_file:
-                candidate_text = df[df['Filename'] == selected_file]['Raw Text'].values[0]
-                st.text_area("Extracted Text Content", candidate_text, height=200)
-
-    # --- TAB 2: HISTORY ---
-    with tab2:
-        st.header("🗄️ Database History")
-        history_df = fetch_history()
-        
-        if not history_df.empty:
-            st.dataframe(history_df, use_container_width=True)
-            csv = history_df.to_csv(index=False).encode('utf-8')
-            st.download_button("Download Full History (CSV)", csv, "full_history.csv", "text/csv")
-            
-            if st.button("Clear History"):
-                conn = sqlite3.connect('resume_history.db')
-                conn.execute("DELETE FROM candidates")
-                conn.commit()
-                conn.close()
-                st.rerun()
+            fig_bar = px.bar(kw_df, x='Keyword', y='Count', title="Trending Keywords in Batch",
+                             color='Count', color_continuous_scale='Viridis')
+            st.plotly_chart(fig_bar, use_container_width=True)
         else:
-            st.info("No history found in database.")
+            st.info("Upload and analyze resumes to see the dashboard.")
+
+    # --- TAB 3: DEEP DIVE (Word Cloud & NER) ---
+    with tab3:
+        if st.session_state['results'] is not None:
+            df = st.session_state['results']
+            candidate_names = df['Name'].tolist()
+            
+            selected_candidate = st.selectbox("Select a Candidate", candidate_names)
+            
+            if selected_candidate:
+                row = df[df['Name'] == selected_candidate].iloc[0]
+                st.subheader(f"Analyzing: {row['Name']}")
+                st.write(f"**Score:** {row['Match Score']}%")
+                
+                c1, c2 = st.columns(2)
+                
+                with c1:
+                    st.markdown("### ☁️ Skill Cloud")
+                    wc = generate_wordcloud(row['Raw Text'])
+                    fig, ax = plt.subplots()
+                    ax.imshow(wc, interpolation='bilinear')
+                    ax.axis("off")
+                    st.pyplot(fig)
+                    
+                with c2:
+                    st.markdown("### 🤖 Entity Recognition (NER)")
+                    doc = nlp(row['Raw Text'])
+                    orgs = [ent.text for ent in doc.ents if ent.label_ == "ORG"]
+                    locs = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
+                    
+                    st.write("**Organizations/Colleges Detected:**")
+                    st.write(", ".join(set(orgs)) if orgs else "None detected")
+                    
+                    st.write("**Locations Detected:**")
+                    st.write(", ".join(set(locs)) if locs else "None detected")
+                    
+                with st.expander("View Full Resume Text"):
+                    st.text(row['Raw Text'])
+        else:
+            st.info("Upload and analyze resumes to unlock Deep Dive.")
